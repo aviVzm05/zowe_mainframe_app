@@ -1,0 +1,22 @@
+# Core dependencies
+streamlit>=1.31.0
+zowe-python-sdk-bundle==1.0.0.dev22
+
+# SSL/Security
+requests>=2.31.0
+urllib3>=2.0.0
+
+# File handling
+python-magic>=0.4.27  # For file type detection
+watchdog>=3.0.0      # For better file system monitoring with streamlit
+
+# Logging and utilities
+python-dateutil>=2.8.2
+pytz>=2024.1
+
+# Optional but recommended for better performance
+streamlit-extras>=0.3.6  # For enhanced UI components 
+
+# Added from the code block
+cryptography>=42.0.0 
+python-dotenv>=1.0.0
