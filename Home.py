@@ -1,7 +1,7 @@
 import streamlit as st
 # Update these imports
 from zowe.core_for_zowe_sdk import ProfileManager
-from zowe.zosmf_for_zowe_sdk import ZosmfApi
+from zowe.zosmf_for_zowe_sdk import Zosmf
 import logging
 import os
 from datetime import datetime, timedelta
@@ -133,43 +133,80 @@ def authenticate_mainframe(userid, password, host):
     try:
         # Get certificate from environment
         cert_path = get_certificate_path()
-        if cert_path:
-            logger.debug(f"Using certificate: {cert_path}")
-            
+        
+        # Create profile manager with app name
         logger.debug("Creating profile manager")
-        profile_manager = ProfileManager()
-        secure_profile = SecureProfileManager(profile_manager)
+        profile_manager = ProfileManager(appname='zowe')
         
-        # Basic profile setup with encryption
-        logger.debug("Setting up secure profile properties")
-        secure_profile.secure_property("host", host)
-        secure_profile.secure_property("user", userid)
-        secure_profile.secure_property("password", password)
-        secure_profile.secure_property("protocol", "https")
-        secure_profile.secure_property("reject_unauthorized", "true")
+        # Create a zosmf-type profile
+        profile_name = f"zosmf_profile_{userid.lower()}"
+        logger.debug(f"Setting up profile: {profile_name}")
+        
+        # Create connection dictionary
+        connection = {
+            "host": host,
+            "port": 443,
+            "user": userid,
+            "password": password,
+            "protocol": "https",
+            "reject_unauthorized": True
+        }
         
         if cert_path:
-            secure_profile.secure_property("cert_path", cert_path)
+            logger.debug(f"Adding certificate to connection")
+            connection["cert_file"] = cert_path
+        
+        # Test z/OSMF connection first
+        logger.info("Testing z/OSMF connection")
+        try:
+            zosmf = Zosmf(connection)
+            zosmf_info = zosmf.get_info()
+        except Exception as e:
+            logger.error(f"Z/OSMF connection test failed: {str(e)}")
+            raise ValueError(f"Connection failed: {str(e)}")
+        
+        # If connection successful, save the profile
+        # Set the base profile properties
+        profile_manager.set_property("profiles.base.properties.host", host)
+        profile_manager.set_property("profiles.base.properties.port", 443)
+        profile_manager.set_property("profiles.base.properties.protocol", "https")
+        profile_manager.set_property("profiles.base.properties.rejectUnauthorized", True)
+        
+        # Set the zosmf profile properties
+        profile_manager.set_property(f"profiles.{profile_name}.type", "zosmf")
+        profile_manager.set_property(f"profiles.{profile_name}.properties.host", host)
+        profile_manager.set_property(f"profiles.{profile_name}.properties.port", 443)
+        profile_manager.set_property(f"profiles.{profile_name}.properties.user", userid)
+        profile_manager.set_property(f"profiles.{profile_name}.properties.password", password)
+        profile_manager.set_property(f"profiles.{profile_name}.properties.rejectUnauthorized", True)
+        
+        if cert_path:
+            profile_manager.set_property(f"profiles.{profile_name}.properties.certFile", cert_path)
+        
+        # Set as default profile
+        profile_manager.set_property("defaults.zosmf", profile_name)
         
         # Save profile to disk
         logger.debug("Saving profile")
         profile_manager.save()
         
-        # Test z/OSMF connection
-        logger.info("Testing z/OSMF connection")
-        zosmf = ZosmfApi(profile_manager)
-        zosmf_info = zosmf.get_info()
+        # Create secure wrapper
+        secure_profile = SecureProfileManager(profile_manager)
         
         # Store in session state
         st.session_state.auth_success = True
         st.session_state.secure_profile = secure_profile
         st.session_state.auth_time = datetime.now()
+        st.session_state.profile_name = profile_name
+        st.session_state.connection = connection  # Store connection for reuse
         
         logger.info(f"Successfully connected to z/OSMF version: {zosmf_info.get('zosmf_version', 'unknown')}")
         return True, f"Successfully connected to z/OSMF! Server version: {zosmf_info.get('zosmf_version', 'unknown')}"
+        
     except Exception as e:
         st.session_state.auth_success = False
         st.session_state.secure_profile = None
+        st.session_state.connection = None
         logger.error(f"Authentication failed: {str(e)}", exc_info=True)
         return False, f"Connection failed: {str(e)}"
 
@@ -211,7 +248,7 @@ def main():
                 logger.error(f"Logout cleanup failed: {str(e)}")
             finally:
                 # Clear session state
-                for key in ['auth_success', 'secure_profile', 'current_host', 'profile_name', 'auth_time']:
+                for key in ['auth_success', 'secure_profile', 'current_host', 'profile_name', 'auth_time', 'connection']:
                     if key in st.session_state:
                         del st.session_state[key]
             st.rerun()

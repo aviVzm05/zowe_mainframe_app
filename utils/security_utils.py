@@ -62,46 +62,67 @@ class SecureProfileManager:
         self.profile_manager = profile_manager
         self.credential_manager = CredentialManager()
         self.creation_time = datetime.now()
-        self.expiry_duration = timedelta(hours=1)  # Session expires after 1 hour
+        self.expiry_duration = timedelta(hours=1)
     
     def is_expired(self):
         """Check if the session has expired"""
         return datetime.now() - self.creation_time > self.expiry_duration
     
-    def secure_property(self, key: str, value: str):
-        """Securely store sensitive property"""
-        if key in ['password', 'user', 'cert_path']:
+    def secure_property(self, json_path: str, value: str):
+        """Securely store sensitive property using proper JSON path"""
+        sensitive_fields = ['password', 'user', 'certFile']
+        
+        # Check if this is a sensitive field that needs encryption
+        field_name = json_path.split('.')[-1]
+        if field_name in sensitive_fields:
             encrypted_value = self.credential_manager.encrypt(value)
-            self.profile_manager.set_property(f"encrypted_{key}", encrypted_value)
+            # Store encrypted value with a marker
+            self.profile_manager.set_property(f"{json_path}_encrypted", encrypted_value)
         else:
-            self.profile_manager.set_property(key, value)
+            # Store non-sensitive values directly
+            self.profile_manager.set_property(json_path, value)
     
-    def get_property(self, key: str) -> str:
-        """Retrieve property, decrypting if necessary"""
-        if key in ['password', 'user', 'cert_path']:
-            encrypted_value = self.profile_manager.get_property(f"encrypted_{key}")
+    def get_property(self, json_path: str) -> str:
+        """Retrieve property using JSON path, decrypting if necessary"""
+        sensitive_fields = ['password', 'user', 'certFile']
+        field_name = json_path.split('.')[-1]
+        
+        if field_name in sensitive_fields:
+            # Try to get encrypted value
+            encrypted_value = self.profile_manager.get_property(f"{json_path}_encrypted")
             if encrypted_value:
                 return self.credential_manager.decrypt(encrypted_value)
-        return self.profile_manager.get_property(key)
+        
+        # Get regular property
+        return self.profile_manager.get_property(json_path)
     
     def cleanup(self):
         """Securely cleanup sensitive data"""
         try:
             if not self.profile_manager:
                 return
-                
-            # Clear sensitive properties
-            sensitive_keys = ['password', 'user', 'cert_path']
-            for key in sensitive_keys:
-                self.profile_manager.set_property(f"encrypted_{key}", None)
-                self.profile_manager.set_property(key, None)
+            
+            # Get all profiles
+            profiles = self.profile_manager.config_appname
+            
+            # Clear sensitive properties from all profiles
+            sensitive_paths = [
+                "profiles.*.properties.password",
+                "profiles.*.properties.user",
+                "profiles.*.properties.certFile"
+            ]
+            
+            for path in sensitive_paths:
+                self.profile_manager.set_property(path, None)
+                self.profile_manager.set_property(f"{path}_encrypted", None)
             
             # Save cleared profile
             self.profile_manager.save()
             
-            # Clear the profile from memory
+            # Clear from memory
             self.profile_manager = None
             logging.info("Profile cleaned up successfully")
+            
         except Exception as e:
             logging.error(f"Cleanup failed: {str(e)}")
             raise 
